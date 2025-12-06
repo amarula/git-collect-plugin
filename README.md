@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="images/git-collect.png" width="800" alt="Git Collect Plugin">
+</p>
+
 # Git Collect Plugin for Jenkins
 
 [![Jenkins Plugin](https://img.shields.io/badge/jenkins-plugin-blue.svg)](https://jenkins.io)
