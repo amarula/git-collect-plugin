@@ -48,16 +48,43 @@ import hudson.tasks.Builder;
 import hudson.util.FormValidation;
 import jenkins.tasks.SimpleBuildStep;
 
+/**
+ * A Jenkins build step that collects Git repository information from a local workspace directory
+ * and registers it with the current build.
+ *
+ * <p>This step allows a build to recognize a directory as a Git repository even if the
+ * checkout was not performed by the standard Git SCM plugin during the current stage
+ * (e.g., if the repo was generated, restored from cache, or checked out by a script).
+ *
+ * <p>It populates {@link BuildData} actions, allowing subsequent steps to access Git
+ * revision data and optionally generating changelogs.
+ */
 public class CollectGitStep extends Builder implements SimpleBuildStep {
 
+    /**
+     * The relative path to the Git repository within the workspace.
+     * If null or empty, the workspace root is assumed.
+     */
     private String path;
-    private String markedCommit; // Optional: A branch name (e.g. "master") or SHA
+
+    /**
+     * Optional reference (branch name or SHA) used as the "marked" revision (the previous baseline).
+     * Defaults to "HEAD" if not specified.
+     */
+    private String markedCommit;
+
+    /**
+     * Flag indicating whether to generate a changelog between the marked revision and the current revision.
+     */
     private Boolean changelog = false;
 
     public static final Logger LOGGER = Logger.getLogger(CollectGitStep.class.getName());
 
     /**
-     * Checks if the given directory is a valid Git repository.
+     * Checks if the given Git client points to a valid repository.
+     *
+     * @param git the {@link GitClient} instance to test.
+     * @return {@code true} if the directory is a valid git repository (can list revisions); {@code false} otherwise.
      */
     private boolean isGitRepository(GitClient git) {
         try {
@@ -69,7 +96,16 @@ public class CollectGitStep extends Builder implements SimpleBuildStep {
     }
 
     /**
-     * Write changelog function
+     * Generates a standard Jenkins XML changelog file.
+     *
+     * <p>Calculates the difference between the {@code builtRevision} and the {@code markedRevision}
+     * found in the {@link LocalGitInfo} and writes it to a temporary file.
+     *
+     * @param run  The current build run.
+     * @param git  The git client initialized for the target directory.
+     * @param info The collected git information containing revision data.
+     * @return The absolute path to the generated changelog file, or {@code null} if generation failed.
+     * @throws IOException If an I/O error occurs during file creation or writing.
      */
     private String writeChangelog(@Nonnull Run<?, ?> run, GitClient git, LocalGitInfo info) throws IOException {
         File changelogFile = null;
@@ -104,7 +140,20 @@ public class CollectGitStep extends Builder implements SimpleBuildStep {
     }
 
     /**
-     * Performs the necessary logic against Pipeline jobs.
+     * Manually triggers the SCM checkout listeners for Workflow (Pipeline) runs.
+     *
+     * <p>This method constructs a temporary {@link GitSCM} instance and invokes the
+     * {@link SCMListenerImpl#onCheckout} method to ensure that the changelog
+     * is properly registered and visible in the Pipeline UI.
+     *
+     * @param run           The current workflow run.
+     * @param gitDir        The FilePath to the git repository.
+     * @param workspace     The workspace root.
+     * @param listener      The task listener.
+     * @param url           The remote URL of the git repository.
+     * @param changeLogPath The path to the generated changelog XML file.
+     * @throws IOException If an I/O error occurs.
+     * @throws Exception   If any other error occurs during the listener invocation.
      */
     private void perfromAgainstWorkflowRun(WorkflowRun run, FilePath gitDir, FilePath workspace,
                 TaskListener listener, String url, String changeLogPath) throws IOException, Exception {
@@ -117,37 +166,90 @@ public class CollectGitStep extends Builder implements SimpleBuildStep {
                                    new File(changeLogPath), null);
     }
 
+    /**
+     * Default constructor for DataBound instantiation.
+     */
     @DataBoundConstructor
     public CollectGitStep() {
     }
 
+    /**
+     * Sets the relative path to the git directory.
+     *
+     * @param path The path relative to the workspace root.
+     */
     @DataBoundSetter
     public void setPath(String path) {
         this.path = path;
     }
 
+    /**
+     * Gets the relative path to the git directory.
+     *
+     * @return The path, or null.
+     */
     public String getPath() {
         return path;
     }
 
+    /**
+     * Sets whether to generate a changelog.
+     *
+     * @param changelog {@code true} to enable changelog generation.
+     */
     @DataBoundSetter
     public void setChangelog(boolean changelog) {
         this.changelog = changelog;
     }
 
+    /**
+     * Gets the changelog generation flag.
+     *
+     * @return {@code true} if changelog generation is enabled.
+     */
     public Boolean getChangelog() {
         return this.changelog;
     }
 
+    /**
+     * Sets the specific commit or branch to mark as the previous baseline.
+     *
+     * @param markedCommit A SHA1 hash or branch name (e.g., "master").
+     */
     @DataBoundSetter
     public void setMarkedCommit(String markedCommit) {
         this.markedCommit = markedCommit;
     }
 
+    /**
+     * Gets the marked commit reference.
+     *
+     * @return The marked commit string.
+     */
     public String getMarkedCommit() {
         return markedCommit;
     }
 
+    /**
+     * Executes the build step.
+     *
+     * <p>This method performs the following actions:
+     * <ol>
+     * <li>Resolves the Git directory path.</li>
+     * <li>Validates that the directory is a Git repository.</li>
+     * <li>Scans the repository using {@link GitScanner} to retrieve remote URLs and revisions.</li>
+     * <li>Optionally generates a changelog if requested and differences are found.</li>
+     * <li>Creates a {@link BuildData} object and attaches it to the run actions.</li>
+     * <li>Attaches {@link MultiScmEnvAction} for environment variable contribution.</li>
+     * </ol>
+     *
+     * @param run       The current build.
+     * @param workspace The project workspace.
+     * @param launcher  The launcher.
+     * @param listener  The build listener for logging.
+     * @throws InterruptedException If the operation is interrupted.
+     * @throws IOException          If an I/O error occurs (e.g., repo not found).
+     */
     @Override
     public void perform(@Nonnull Run<?, ?> run, @Nonnull FilePath workspace,
                         @Nonnull Launcher launcher, @Nonnull TaskListener listener)
