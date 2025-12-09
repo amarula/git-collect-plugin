@@ -1,15 +1,11 @@
 package io.jenkins.plugins.gitcollect;
 
-import org.jenkinsci.plugins.workflow.job.WorkflowRun;
-import org.jenkinsci.plugins.workflow.job.WorkflowRun.SCMListenerImpl;
-
 import java.io.File;
 import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.OutputStream;
 import java.io.OutputStreamWriter;
 import java.io.Writer;
-
 import java.nio.charset.StandardCharsets;
 import java.nio.file.FileSystems;
 import java.nio.file.Files;
@@ -17,6 +13,8 @@ import java.nio.file.attribute.PosixFilePermissions;
 import java.util.List;
 import java.util.logging.Level;
 import java.util.logging.Logger;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 import javax.annotation.Nonnull;
 
@@ -24,6 +22,8 @@ import org.jenkinsci.Symbol;
 import org.jenkinsci.plugins.gitclient.ChangelogCommand;
 import org.jenkinsci.plugins.gitclient.Git;
 import org.jenkinsci.plugins.gitclient.GitClient;
+import org.jenkinsci.plugins.workflow.job.WorkflowRun;
+import org.jenkinsci.plugins.workflow.job.WorkflowRun.SCMListenerImpl;
 import org.kohsuke.stapler.DataBoundConstructor;
 import org.kohsuke.stapler.DataBoundSetter;
 import org.kohsuke.stapler.QueryParameter;
@@ -38,7 +38,10 @@ import hudson.model.Run;
 import hudson.model.TaskListener;
 import hudson.plugins.git.GitException;
 import hudson.plugins.git.GitSCM;
+import hudson.plugins.git.browser.GitLab;
 import hudson.plugins.git.browser.GitRepositoryBrowser;
+import hudson.plugins.git.browser.GithubWeb;
+import hudson.plugins.git.browser.Gitiles;
 import hudson.plugins.git.extensions.impl.RelativeTargetDirectory;
 import hudson.plugins.git.util.Build;
 import hudson.plugins.git.util.BuildData;
@@ -59,6 +62,9 @@ import jenkins.tasks.SimpleBuildStep;
  * revision data and optionally generating changelogs.
  */
 public class CollectGitStep extends Builder implements SimpleBuildStep {
+
+    private static final Pattern SSH_URI_PATTERN = Pattern.compile("^ssh://(?:[^@]+@)?([^:/]+)(?::\\d+)?/(.+)$");
+    private static final Pattern SCP_STYLE_PATTERN = Pattern.compile("^(?:[^@]+@)?([^:/]+):(.+)$");
 
     /**
      * The relative path to the Git repository within the workspace.
@@ -92,6 +98,28 @@ public class CollectGitStep extends Builder implements SimpleBuildStep {
         } catch (GitException | InterruptedException e) {
            return false;
         }
+    }
+
+    private static String convertToHttps(String sshUrl, boolean isGerrit) {
+        if (sshUrl == null || sshUrl.isEmpty()) {
+            return sshUrl;
+        }
+
+        // Check for URI style (ssh://...) first as it's more specific
+        Matcher uriMatcher = SSH_URI_PATTERN.matcher(sshUrl);
+        if (uriMatcher.find()) {
+            return String.format("https://%s%s/%s", uriMatcher.group(1), isGerrit == true ? "/plugins/gitiles" : "",
+                                 uriMatcher.group(2));
+        }
+
+        // Check for SCP style (git@...)
+        Matcher scpMatcher = SCP_STYLE_PATTERN.matcher(sshUrl);
+        if (scpMatcher.find()) {
+            return String.format("https://%s%s/%s", scpMatcher.group(1), isGerrit == true ? "/plugins/gitiles" : "",
+                                 scpMatcher.group(2));
+        }
+
+        return sshUrl;
     }
 
     /**
@@ -160,7 +188,16 @@ public class CollectGitStep extends Builder implements SimpleBuildStep {
 
         GitSCM scm = new GitSCM(url);
         scm.getExtensions().add(new RelativeTargetDirectory(gitDir.getRemote()));
-        GitRepositoryBrowser browser =  (GitRepositoryBrowser) scm.guessBrowser();
+        GitRepositoryBrowser browser = (GitRepositoryBrowser) scm.guessBrowser();
+
+        if (browser == null) {
+            if (url.contains("gerrit")) {
+                browser = new Gitiles(convertToHttps(url, true));
+            } else {
+                browser = new GithubWeb(convertToHttps(url, false));
+            }
+        }
+
         scm.setBrowser(browser);
 
         scmListenerImpl.onCheckout(run, scm, workspace, listener,
