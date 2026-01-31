@@ -16,8 +16,6 @@ import java.util.logging.Logger;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
-import javax.annotation.Nonnull;
-
 import org.jenkinsci.Symbol;
 import org.jenkinsci.plugins.gitclient.ChangelogCommand;
 import org.jenkinsci.plugins.gitclient.Git;
@@ -48,6 +46,7 @@ import hudson.plugins.git.util.BuildData;
 import hudson.tasks.BuildStepDescriptor;
 import hudson.tasks.Builder;
 import hudson.util.FormValidation;
+import jakarta.annotation.Nonnull;
 import jenkins.tasks.SimpleBuildStep;
 
 /**
