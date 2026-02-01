@@ -25,6 +25,7 @@ import org.jenkinsci.plugins.workflow.job.WorkflowRun.SCMListenerImpl;
 import org.kohsuke.stapler.DataBoundConstructor;
 import org.kohsuke.stapler.DataBoundSetter;
 import org.kohsuke.stapler.QueryParameter;
+import org.kohsuke.stapler.verb.POST;
 
 import hudson.EnvVars;
 import hudson.Extension;
@@ -419,6 +420,7 @@ public class CollectGitStep extends Builder implements SimpleBuildStep {
             return "Git Collect: Register Local Data";
         }
 
+        @POST
         public FormValidation doCheckPath(@QueryParameter String value) {
             if (value.startsWith("/")) {
                 return FormValidation.warning("Paths should usually be relative to the workspace.");
